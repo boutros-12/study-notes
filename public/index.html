@@ -62,6 +62,7 @@
   .actions { display:flex; gap:6px; margin-top:8px; }
   .actions button { background:none; border:1px solid var(--line); color:var(--muted); border-radius:6px; padding:3px 9px; cursor:pointer; font-size:12px; }
   .actions button:hover { color:var(--text); }
+  .actions .model { margin-left:auto; color:var(--muted); font-size:11px; align-self:center; opacity:.8; }
 
   /* Welcome */
   .welcome { text-align:center; margin-top:12vh; }
@@ -228,20 +229,21 @@
     return d;
   }
 
-  function addBot(text, { isLast = false } = {}) {
+  function addBot(text, { isLast = false, model = "" } = {}) {
     wrap.querySelector(".welcome")?.remove();
     const d = document.createElement("div"); d.className = "msg bot";
     const body = document.createElement("div"); body.className = "md"; d.appendChild(body);
-    if (text) { renderMd(body, text); addActions(d, text, isLast); }
+    if (text) { renderMd(body, text); addActions(d, text, isLast, model); }
     wrap.appendChild(d);
     return d;
   }
 
-  function addActions(d, text, isLast) {
+  function addActions(d, text, isLast, model) {
     d.querySelector(".actions")?.remove();
     const a = document.createElement("div"); a.className = "actions";
     const c = document.createElement("button"); c.textContent = "Copy"; c.onclick = () => copy(text, c); a.appendChild(c);
     if (isLast) { const r = document.createElement("button"); r.textContent = "↻ Regenerate"; r.onclick = regenerate; a.appendChild(r); }
+    if (model) { const t = document.createElement("span"); t.className = "model"; t.textContent = model; a.appendChild(t); }
     d.appendChild(a);
   }
 
@@ -251,7 +253,7 @@
     $("title").textContent = c && c.messages.length ? c.title : "Study Notes";
     wrap.innerHTML = "";
     if (!c || !c.messages.length) return welcome();
-    c.messages.forEach((m, i) => m.role === "user" ? addUser(m) : addBot(m.content, { isLast: i === c.messages.length - 1 }));
+    c.messages.forEach((m, i) => m.role === "user" ? addUser(m) : addBot(m.content, { isLast: i === c.messages.length - 1, model: m.model }));
     chatBox.scrollTop = chatBox.scrollHeight;
   }
 
@@ -312,7 +314,7 @@
     if (c.title === "New chat") c.title = (text || files[0].name).slice(0, 40);
     persist(); renderList(); $("title").textContent = c.title;
     // remove old regenerate buttons
-    wrap.querySelectorAll(".actions button:nth-child(2)").forEach((b) => b.remove());
+    wrap.querySelectorAll(".actions button:nth-child(2)").forEach((b) => { if (b.textContent.includes("Regenerate")) b.remove(); });
     addUser(msg);
     await reply(c);
   }
@@ -324,7 +326,7 @@
     chatBox.scrollTop = chatBox.scrollHeight;
     controller = new AbortController();
     sendBtn.textContent = "Stop"; sendBtn.classList.add("stop");
-    let reply = "";
+    let reply = "", model = "";
     try {
       const r = await fetch("/api/chat", {
         method: "POST",
@@ -337,6 +339,7 @@
         box.remove(); done(); return reply(c);
       }
       if (!r.ok) { const d = await r.json().catch(() => ({})); throw new Error(d.error || "Something went wrong"); }
+      model = r.headers.get("X-Model") || "";
       const reader = r.body.getReader(), dec = new TextDecoder();
       let last = 0;
       while (true) {
@@ -360,9 +363,9 @@
       reply += "\n\n*(stopped)*";
     }
     renderMd(body, reply);
-    c.messages.push({ role: "assistant", content: reply });
+    c.messages.push({ role: "assistant", content: reply, model });
     persist();
-    addActions(box, reply, true);
+    addActions(box, reply, true, model);
     done();
   }
 
