@@ -132,6 +132,7 @@ export default async function handler(req, res) {
         stream: !step.search,
       };
       if (step.effort) body.reasoning_effort = step.effort;
+      if (step.model.startsWith("qwen/")) body.reasoning_format = "hidden"; // hide <think> text
       if (step.search) body.tools = [{ type: "browser_search" }];
       if (step.p === "gemini") { body.max_tokens = body.max_completion_tokens; delete body.max_completion_tokens; }
 
