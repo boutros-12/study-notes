@@ -27,6 +27,10 @@
   .item span { flex:1; overflow:hidden; white-space:nowrap; text-overflow:ellipsis; }
   .item b { opacity:0; font-weight:400; padding:0 4px; }
   .item:hover b, .item.on b { opacity:.7; }
+  .syncbar { margin:8px; background:var(--panel); border:1px solid var(--line); color:var(--muted); border-radius:10px; padding:9px 10px; text-align:left; cursor:pointer; font-size:13px; }
+  .syncbar:hover { color:var(--text); }
+  .syncbar.on { color:#7ee2a8; }
+  .syncbar.bad { color:var(--err); }
 
   /* Main */
   main { flex:1; display:flex; flex-direction:column; min-width:0; }
@@ -101,6 +105,7 @@
 <aside>
   <div class="top"><button class="newbtn" id="new">+ New chat</button></div>
   <div id="list"></div>
+  <button class="syncbar" id="syncbtn" title="Sync chats across your devices">☁️ Sync: off</button>
 </aside>
 <div id="shade"></div>
 <main>
@@ -141,7 +146,12 @@
   let controller = null;   // for the Stop button
 
   const current = () => chats.find((c) => c.id === currentId);
-  const persist = () => { save("chats", chats); save("current", currentId); };
+  let deleted = load("deleted", {});   // chat id -> time deleted (so deletes sync too)
+  const persist = (changed) => {
+    if (changed) changed.updatedAt = Date.now();
+    save("chats", chats); save("current", currentId); save("deleted", deleted);
+    if (changed || persist.force) scheduleSync();
+  };
 
   // ---------- markdown ----------
   const hasMd = typeof marked !== "undefined" && typeof DOMPurify !== "undefined";
@@ -193,8 +203,10 @@
         e.stopPropagation();
         if (controller || !confirm("Delete this chat?")) return;
         chats = chats.filter((x) => x.id !== c.id);
+        deleted[c.id] = Date.now();
         if (currentId === c.id) currentId = chats[0]?.id || null;
-        persist(); if (!currentId) newChat(); else render();
+        persist.force = true; persist(); persist.force = false;
+        if (!currentId) newChat(); else render();
       };
       list.appendChild(d);
     }
@@ -312,7 +324,7 @@
     q.value = ""; autosize();
     c.messages.push(msg);
     if (c.title === "New chat") c.title = (text || files[0].name).slice(0, 40);
-    persist(); renderList(); $("title").textContent = c.title;
+    persist(c); renderList(); $("title").textContent = c.title;
     // remove old regenerate buttons
     wrap.querySelectorAll(".actions button:nth-child(2)").forEach((b) => { if (b.textContent.includes("Regenerate")) b.remove(); });
     addUser(msg);
@@ -364,7 +376,7 @@
     }
     renderMd(body, reply);
     c.messages.push({ role: "assistant", content: reply, model });
-    persist();
+    persist(c);
     addActions(box, reply, true, model);
     done();
   }
@@ -387,7 +399,7 @@
     if (controller) return;
     const c = current();
     if (c.messages.at(-1)?.role !== "assistant") return;
-    c.messages.pop(); persist();
+    c.messages.pop(); persist(c);
     [...wrap.querySelectorAll(".msg.bot")].at(-1)?.remove();
     reply(c);
   }
@@ -410,7 +422,94 @@
     if (e.dataTransfer?.files?.length) { $("picker").files = e.dataTransfer.files; $("picker").onchange({ target: $("picker") }); }
   });
 
+  // ---------- sync across devices ----------
+  let syncCode = load("syncCode", "");
+  let syncTimer = null, syncing = false, lastSync = 0;
+  const syncBtn = $("syncbtn");
+
+  function syncStatus(text, cls) {
+    syncBtn.textContent = text;
+    syncBtn.className = "syncbar" + (cls ? " " + cls : "");
+  }
+
+  // Combine two chat lists: newest version of each chat wins, deleted chats stay deleted
+  function merge(local, remote, delA, delB) {
+    const del = { ...delA };
+    for (const [id, t] of Object.entries(delB || {})) del[id] = Math.max(del[id] || 0, t);
+    const byId = new Map();
+    for (const c of [...remote, ...local]) {
+      const old = byId.get(c.id);
+      if (!old || (c.updatedAt || 0) > (old.updatedAt || 0)) byId.set(c.id, c);
+    }
+    const out = [...byId.values()].filter((c) => !(del[c.id] >= (c.updatedAt || 0)));
+    out.sort((a, b) => (b.updatedAt || Number.parseInt(b.id, 36) || 0) - (a.updatedAt || Number.parseInt(a.id, 36) || 0));
+    // forget very old delete records (60 days)
+    const cutoff = Date.now() - 60 * 864e5;
+    for (const id in del) if (del[id] < cutoff) delete del[id];
+    return { chats: out, deleted: del };
+  }
+
+  async function syncNow() {
+    if (!syncCode || syncing || controller) return;
+    syncing = true;
+    try {
+      const h = { "x-sync-code": syncCode, "Content-Type": "application/json" };
+      const r = await fetch("/api/sync", { headers: h });
+      const d = await r.json().catch(() => ({}));
+      if (!r.ok) throw new Error(d.error || "Sync failed");
+      const remote = d.data || { chats: [], deleted: {} };
+      const before = JSON.stringify(chats);
+      const m = merge(chats, remote.chats || [], deleted, remote.deleted);
+      if (controller) return; // a reply started meanwhile; try again later
+      chats = m.chats; deleted = m.deleted;
+      if (!current()) {
+        const empty = { id: Date.now().toString(36), title: "New chat", messages: [] };
+        chats.unshift(empty); currentId = empty.id;
+      }
+      save("chats", chats); save("deleted", deleted); save("current", currentId);
+      if (JSON.stringify(chats) !== before) render();
+      // upload the merged result (skip empty "New chat" placeholders)
+      const toSend = { chats: chats.filter((c) => c.messages.length), deleted };
+      const w = await fetch("/api/sync", { method: "PUT", headers: h, body: JSON.stringify({ data: toSend }) });
+      const wd = await w.json().catch(() => ({}));
+      if (!w.ok) throw new Error(wd.error || "Sync failed");
+      lastSync = Date.now();
+      syncStatus("☁️ Synced ✓ " + new Date().toTimeString().slice(0, 5), "on");
+    } catch (e) {
+      syncStatus("⚠️ Sync: " + e.message.slice(0, 40), "bad");
+    } finally {
+      syncing = false;
+    }
+  }
+
+  function scheduleSync() {
+    if (!syncCode) return;
+    clearTimeout(syncTimer);
+    syncTimer = setTimeout(syncNow, 1500);
+  }
+
+  syncBtn.onclick = () => {
+    if (syncCode) {
+      const a = prompt("Sync is ON.\n\nType SYNC to sync now, or OFF to turn sync off on this device.\n(Your chats stay saved in the cloud.)", "SYNC");
+      if (!a) return;
+      if (a.trim().toUpperCase() === "OFF") { syncCode = ""; save("syncCode", ""); syncStatus("☁️ Sync: off"); return; }
+      return syncNow();
+    }
+    const code = prompt("Choose a private sync code (at least 6 characters).\n\nUse the SAME code on all your devices to see the same chats.\nAnyone with this code can read your chats, so make it hard to guess.");
+    if (!code) return;
+    if (code.trim().length < 6) return alert("The code must be at least 6 characters.");
+    syncCode = code.trim(); save("syncCode", syncCode);
+    syncStatus("☁️ Syncing...");
+    syncNow();
+  };
+
+  // keep devices up to date
+  window.addEventListener("focus", () => { if (Date.now() - lastSync > 5000) syncNow(); });
+  document.addEventListener("visibilitychange", () => { if (!document.hidden) syncNow(); });
+  setInterval(() => { if (!document.hidden) syncNow(); }, 30000);
+
   if (!current()) newChat(); else render();
+  if (syncCode) { syncStatus("☁️ Syncing..."); syncNow(); }
   q.focus();
 </script>
 </body>
