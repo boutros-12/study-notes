@@ -11,12 +11,13 @@ export default async function handler(req, res) {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: `Bearer ${key}` },
         body: JSON.stringify({ model, messages: [{ role: "user", content: "Say OK" }], max_tokens: 20 }),
+        signal: AbortSignal.timeout(15000),
       });
       const d = await r.json().catch(() => ({}));
       const err = Array.isArray(d) ? d[0]?.error : d?.error;
       out[name] = r.ok ? "OK" : `error ${r.status}: ${(err?.message || "").slice(0, 160)}`;
     } catch (e) {
-      out[name] = "network error";
+      out[name] = e.name === "TimeoutError" || e.name === "AbortError" ? "too slow (no answer in 15s)" : "network error";
     }
   }
 

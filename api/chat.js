@@ -136,13 +136,23 @@ export default async function handler(req, res) {
       if (step.search) body.tools = [{ type: "browser_search" }];
       if (step.p === "gemini") { body.max_tokens = body.max_completion_tokens; delete body.max_completion_tokens; }
 
+      // Give up on a model that doesn't start answering in time, and try the next one
+      const ac = new AbortController();
+      const timer = setTimeout(() => ac.abort(), step.search ? 40000 : 20000);
       try {
         r = await fetch(PROVIDERS[step.p].url, {
           method: "POST",
           headers: { "Content-Type": "application/json", Authorization: `Bearer ${PROVIDERS[step.p].key()}` },
           body: JSON.stringify(body),
+          signal: ac.signal,
         });
-      } catch (e) { lastError = "Network error"; r = null; continue; }
+        if (step.search && r.ok) { r = { ok: true, _json: await r.json() }; } // web answer arrives all at once
+      } catch (e) {
+        lastError = e.name === "AbortError" ? `${step.label} took too long` : "Network error";
+        console.log(`[chat] ${step.label}: ${lastError}`);
+        r = null; clearTimeout(timer); continue;
+      }
+      clearTimeout(timer);
 
       if (r.ok) break;
       const data = await r.json().catch(() => ({}));
@@ -169,7 +179,7 @@ export default async function handler(req, res) {
 
     // Web mode: one full answer (search runs on Groq's side)
     if (!body_stream(step)) {
-      const data = await r.json();
+      const data = r._json;
       res.write(cleanCitations(data.choices?.[0]?.message?.content || ""));
       return res.end();
     }
