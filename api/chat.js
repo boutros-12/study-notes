@@ -31,27 +31,40 @@ export default async function handler(req, res) {
     content: String(m.content || "").slice(0, 4000),
   }));
 
+  // Try models in order; if one is retired or not allowed, use the next
+  const models = (process.env.MODEL ? [process.env.MODEL] : []).concat([
+    "openai/gpt-oss-120b",
+    "llama-3.3-70b-versatile",
+    "openai/gpt-oss-20b",
+    "llama-3.1-8b-instant",
+  ]);
+
   try {
-    const r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
-      },
-      body: JSON.stringify({
-        model: process.env.MODEL || "llama-3.3-70b-versatile",
-        messages: [
-          { role: "system", content: "You are a helpful, friendly assistant. Keep answers clear and short." },
-          ...clean,
-        ],
-        max_tokens: 1024,
-        stream: true,
-      }),
-    });
-    if (!r.ok) {
+    let r, lastError = "AI error";
+    for (const model of models) {
+      r = await fetch("https://api.groq.com/openai/v1/chat/completions", {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${process.env.GROQ_API_KEY}`,
+        },
+        body: JSON.stringify({
+          model,
+          messages: [
+            { role: "system", content: "You are a helpful, friendly assistant. Keep answers clear and short." },
+            ...clean,
+          ],
+          max_tokens: 1024,
+          stream: true,
+        }),
+      });
+      if (r.ok) break;
       const data = await r.json().catch(() => ({}));
-      return res.status(500).json({ error: data?.error?.message || "AI error" });
+      lastError = data?.error?.message || "AI error";
+      const modelProblem = r.status === 404 || /model/i.test(lastError);
+      if (!modelProblem) break;
     }
+    if (!r.ok) return res.status(500).json({ error: lastError });
 
     // Stream plain text chunks to the browser
     res.writeHead(200, { "Content-Type": "text/plain; charset=utf-8", "Cache-Control": "no-cache" });
