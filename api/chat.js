@@ -48,21 +48,18 @@ const CHAINS = {
   smart: () => [
     { p: "groq", model: "openai/gpt-oss-120b", label: "GPT-OSS 120B", effort: "medium", budget: 22000 },
     { p: "gemini", model: GEMINI_MODEL(), label: "Gemini Flash", budget: 200000 },
-    { p: "groq", model: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", budget: 22000 },
     { p: "groq", model: "openai/gpt-oss-20b", label: "GPT-OSS 20B", effort: "medium", budget: 22000 },
-    { p: "groq", model: "llama-3.1-8b-instant", label: "Llama 3.1 8B", budget: 22000 },
   ],
   web: () => [
     { p: "groq", model: "openai/gpt-oss-120b", label: "GPT-OSS 120B + web", effort: "low", search: true, budget: 12000 },
     { p: "groq", model: "openai/gpt-oss-20b", label: "GPT-OSS 20B + web", effort: "low", search: true, budget: 12000 },
     { p: "gemini", model: GEMINI_MODEL(), label: "Gemini Flash (no web)", budget: 200000, noWeb: true },
-    { p: "groq", model: "llama-3.3-70b-versatile", label: "Llama 3.3 70B (no web)", budget: 22000, noWeb: true },
+    { p: "groq", model: "openai/gpt-oss-120b", label: "GPT-OSS 120B (no web)", effort: "medium", budget: 22000, noWeb: true },
   ],
   fast: () => [
-    { p: "groq", model: "llama-3.1-8b-instant", label: "Llama 3.1 8B", budget: 22000 },
     { p: "groq", model: "openai/gpt-oss-20b", label: "GPT-OSS 20B", effort: "low", budget: 22000 },
     { p: "gemini", model: GEMINI_MODEL(), label: "Gemini Flash", budget: 200000 },
-    { p: "groq", model: "llama-3.3-70b-versatile", label: "Llama 3.3 70B", budget: 22000 },
+    { p: "groq", model: "openai/gpt-oss-120b", label: "GPT-OSS 120B", effort: "low", budget: 22000 },
   ],
 };
 
