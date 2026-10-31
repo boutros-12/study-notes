@@ -49,15 +49,18 @@ const CHAINS = {
     { p: "groq", model: "openai/gpt-oss-120b", label: "GPT-OSS 120B", effort: "medium", budget: 22000 },
     { p: "gemini", model: GEMINI_MODEL(), label: "Gemini Flash", budget: 200000 },
     { p: "groq", model: "openai/gpt-oss-20b", label: "GPT-OSS 20B", effort: "medium", budget: 22000 },
+    { p: "groq", model: "qwen/qwen3.8-27b", label: "Qwen 3.8 27B", budget: 22000 },
   ],
   web: () => [
     { p: "groq", model: "openai/gpt-oss-120b", label: "GPT-OSS 120B + web", effort: "low", search: true, budget: 12000 },
     { p: "groq", model: "openai/gpt-oss-20b", label: "GPT-OSS 20B + web", effort: "low", search: true, budget: 12000 },
     { p: "gemini", model: GEMINI_MODEL(), label: "Gemini Flash (no web)", budget: 200000, noWeb: true },
     { p: "groq", model: "openai/gpt-oss-120b", label: "GPT-OSS 120B (no web)", effort: "medium", budget: 22000, noWeb: true },
+    { p: "groq", model: "qwen/qwen3.8-27b", label: "Qwen 3.8 27B (no web)", budget: 22000, noWeb: true },
   ],
   fast: () => [
     { p: "groq", model: "openai/gpt-oss-20b", label: "GPT-OSS 20B", effort: "low", budget: 22000 },
+    { p: "groq", model: "qwen/qwen3.8-27b", label: "Qwen 3.8 27B", budget: 22000 },
     { p: "gemini", model: GEMINI_MODEL(), label: "Gemini Flash", budget: 200000 },
     { p: "groq", model: "openai/gpt-oss-120b", label: "GPT-OSS 120B", effort: "low", budget: 22000 },
   ],
@@ -129,6 +132,7 @@ export default async function handler(req, res) {
         stream: !step.search,
       };
       if (step.effort) body.reasoning_effort = step.effort;
+      if (step.model.startsWith("qwen/")) body.reasoning_format = "hidden"; // hide <think> text
       if (step.search) body.tools = [{ type: "browser_search" }];
       if (step.p === "gemini") { body.max_tokens = body.max_completion_tokens; delete body.max_completion_tokens; }
 
