@@ -58,6 +58,13 @@ const CHAINS = {
     { p: "groq", model: "openai/gpt-oss-120b", label: "GPT-OSS 120B (no web)", effort: "medium", budget: 22000, noWeb: true },
     { p: "groq", model: "qwen/qwen3.8-27b", label: "Qwen 3.8 27B (no web)", budget: 22000, noWeb: true },
   ],
+  // Used automatically when the chat contains pictures
+  vision: () => [
+    { p: "groq", model: "qwen/qwen3.8-27b", label: "Qwen 3.8 (vision)", budget: 20000, vision: true },
+    { p: "gemini", model: GEMINI_MODEL(), label: "Gemini Flash (vision)", budget: 200000, vision: true },
+    { p: "gemini", model: "gemini-2.5-flash", label: "Gemini 2.5 Flash (vision)", budget: 200000, vision: true },
+    { p: "gemini", model: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite (vision)", budget: 200000, vision: true },
+  ],
   fast: () => [
     { p: "groq", model: "openai/gpt-oss-20b", label: "GPT-OSS 20B", effort: "low", budget: 22000 },
     { p: "groq", model: "qwen/qwen3.8-27b", label: "Qwen 3.8 27B", budget: 22000 },
@@ -109,13 +116,22 @@ export default async function handler(req, res) {
   const { messages, mode: modeName } = req.body || {};
   if (!Array.isArray(messages) || !messages.length) return res.status(400).json({ error: "Bad request" });
 
+  // Pictures: data URLs only, max 3 in the whole request (newest kept)
+  let imgLeft = 3;
   const all = messages.slice(-40).map((m) => ({
     role: m.role === "assistant" ? "assistant" : "user",
     content: String(m.content || "").slice(0, 200000),
+    images: Array.isArray(m.images) ? m.images.filter((u) => typeof u === "string" && /^data:image\/(png|jpe?g|webp|gif);base64,/.test(u) && u.length < 6e6) : [],
   }));
+  for (let i = all.length - 1; i >= 0; i--) {
+    const keep = all[i].images.slice(0, Math.max(imgLeft, 0));
+    imgLeft -= keep.length;
+    all[i].images = all[i].role === "user" ? keep : [];
+  }
+  const hasImages = all.some((m) => m.images.length);
 
   const today = new Date().toISOString().slice(0, 10);
-  const chain = (CHAINS[modeName] || CHAINS.smart)().filter((s) => PROVIDERS[s.p].key());
+  const chain = (hasImages ? CHAINS.vision : CHAINS[modeName] || CHAINS.smart)().filter((s) => PROVIDERS[s.p].key());
   if (!chain.length) return res.status(500).json({ error: "No API key set on the server." });
 
   let r, step, lastError = "AI error";
@@ -123,11 +139,15 @@ export default async function handler(req, res) {
     for (step of chain) {
       const system = `${SYSTEM_PROMPT}\n\nToday's date is ${today}.` +
         (step.search ? "\nYou can search the web. Use it for anything recent or factual you are unsure about, and mention the sources (site names or links) at the end." : "") +
-        (step.noWeb ? "\nWeb search is unavailable right now. Answer from your own knowledge and say that live info may be out of date." : "");
+        (step.noWeb ? "\nWeb search is unavailable right now. Answer from your own knowledge and say that live info may be out of date." : "") +
+        (step.vision ? "\nThe user attached picture(s). Look at them carefully: read any text, code, diagrams, tables or questions in them, and answer based on what you see." : "");
 
       const body = {
         model: step.model,
-        messages: [{ role: "system", content: system }, ...fitHistory(all, step.budget)],
+        messages: [{ role: "system", content: system }, ...fitHistory(all, step.budget).map((m) =>
+          m.images.length
+            ? { role: m.role, content: [{ type: "text", text: m.content }, ...m.images.map((url) => ({ type: "image_url", image_url: { url } }))] }
+            : { role: m.role, content: m.content })],
         max_completion_tokens: step.search ? 4096 : 8192,
         stream: !step.search,
       };
@@ -163,7 +183,8 @@ export default async function handler(req, res) {
     }
 
     if (!r || !r.ok) {
-      const busy = /rate|limit|quota|exceeded|busy|429/i.test(lastError);
+      const busy = /rate|limit|quota|exceeded|busy|demand|429|503/i.test(lastError);
+      if (hasImages) return res.status(503).json({ error: busy ? "The picture models are busy right now. Try again in a minute." : "Could not read the picture: " + lastError });
       return res.status(503).json({
         error: busy
           ? "All free AI models are at their limit right now. Wait a minute and try again (daily limits reset every 24h)."

@@ -33,6 +33,13 @@ export default async function handler(req, res) {
     out.groq_models = (d.data || []).map((m) => m.id).filter((id) => !/whisper|tts|orpheus|guard/i.test(id)).sort();
   } catch {}
 
+  // Which Gemini models this key can use
+  try {
+    const r = await fetch("https://generativelanguage.googleapis.com/v1beta/openai/models", { headers: { Authorization: `Bearer ${process.env.GEMINI_API_KEY}` }, signal: AbortSignal.timeout(10000) });
+    const d = await r.json();
+    out.gemini_models = (d.data || []).map((m) => m.id.replace(/^models\//, "")).filter((id) => /flash|pro/i.test(id) && !/tts|image|audio|live|embed/i.test(id)).sort();
+  } catch {}
+
   res.setHeader("Cache-Control", "no-store");
   res.status(200).json(out);
 }
