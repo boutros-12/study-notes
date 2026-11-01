@@ -1,0 +1,4 @@
+# Netlify mirror: same site, same keys, same chat history.
+[build]
+  publish = "public"
+  command = "echo 'no build needed'"

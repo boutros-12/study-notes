@@ -43,7 +43,7 @@ const PROVIDERS = {
 
 const CLAUDE_MODEL = () => process.env.CLAUDE_MODEL || "claude-sonnet-5-5";
 const CLAUDE_FAST = () => process.env.CLAUDE_FAST_MODEL || "claude-haiku-5-5";
-const GEMINI_MODEL = () => process.env.GEMINI_MODEL || "gemini-3.8-flash";
+const GEMINI_MODEL = () => process.env.GEMINI_MODEL || "gemini-flash-latest";
 
 // Each step: provider, model, label shown to the user, and options.
 // `budget` = max characters of chat history to send (smaller for low per-minute limits).
@@ -73,8 +73,8 @@ const CHAINS = {
   vision: () => [
     { p: "groq", model: "qwen/qwen3.8-27b", label: "Qwen 3.8 (vision)", budget: 20000, vision: true },
     { p: "gemini", model: GEMINI_MODEL(), label: "Gemini Flash (vision)", budget: 200000, vision: true },
+    { p: "gemini", model: "gemini-flash-lite-latest", label: "Gemini Flash-Lite (vision)", budget: 200000, vision: true },
     { p: "gemini", model: "gemini-2.5-flash", label: "Gemini 2.5 Flash (vision)", budget: 200000, vision: true },
-    { p: "gemini", model: "gemini-2.5-flash-lite", label: "Gemini 2.5 Flash-Lite (vision)", budget: 200000, vision: true },
   ],
   fast: () => [
     { p: "groq", model: "openai/gpt-oss-20b", label: "GPT-OSS 20B", effort: "low", budget: 22000 },

@@ -39,7 +39,7 @@ export default async function handler(req, res) {
   await Promise.all([
     pingClaude(),
     ping("groq", "https://api.groq.com/openai/v1/chat/completions", process.env.GROQ_API_KEY, "openai/gpt-oss-20b"),
-    ping("gemini", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", process.env.GEMINI_API_KEY, process.env.GEMINI_MODEL || "gemini-3.8-flash"),
+    ping("gemini", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", process.env.GEMINI_API_KEY, process.env.GEMINI_MODEL || "gemini-flash-latest"),
   ]);
 
   // Which chat models this Groq key can use
