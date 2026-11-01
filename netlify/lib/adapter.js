@@ -8,7 +8,8 @@ export function adapt(handler) {
       const env = globalThis.Netlify?.env?.toObject?.() || {};
       if (!globalThis.process) globalThis.process = { env: {} };
       if (!globalThis.process.env) globalThis.process.env = {};
-      for (const [k, v] of Object.entries(env)) {
+      for (let [k, v] of Object.entries(env)) {
+        v = String(v).trim().replace(/^["']|["']$/g, ""); // tolerate pasted quotes/spaces
         if (globalThis.process.env[k] !== v) {
           try { globalThis.process.env[k] = v; } catch {}
         }

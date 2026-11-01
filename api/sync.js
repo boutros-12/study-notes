@@ -15,8 +15,9 @@ async function sha256(text) {
   return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
 }
 
-const URL_ = () => process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
-const TOKEN = () => process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
+const clean = (v) => (v ? String(v).trim().replace(/^["']|["']$/g, "") : v);
+const URL_ = () => clean(process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL);
+const TOKEN = () => clean(process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN);
 
 const MAX_BYTES = 4 * 1024 * 1024; // 4 MB per sync code
 
