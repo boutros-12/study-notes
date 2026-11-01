@@ -82,6 +82,9 @@
   #files { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
   .chip { background:var(--panel2); border-radius:8px; padding:4px 8px; font-size:12px; display:flex; gap:6px; align-items:center; }
   .chip b { cursor:pointer; font-weight:400; opacity:.7; }
+  .chip img { width:34px; height:34px; object-fit:cover; border-radius:5px; }
+  .user .pics { display:flex; flex-wrap:wrap; gap:6px; margin-bottom:6px; }
+  .user .pics img { max-width:180px; max-height:180px; border-radius:10px; display:block; cursor:zoom-in; }
   form { display:flex; gap:8px; align-items:flex-end; background:var(--panel); border:1px solid #2a2e38; border-radius:14px; padding:8px; }
   form:focus-within { border-color:#3a4256; }
   textarea { flex:1; resize:none; background:none; color:var(--text); border:0; outline:none; padding:6px 4px; font:inherit; max-height:200px; line-height:1.5; }
@@ -117,16 +120,16 @@
       <button data-mode="smart" title="Strongest model, thinks before answering">🧠 Smart</button>
       <button data-mode="web" title="Searches the internet for current info">🌐 Web</button>
       <button data-mode="fast" title="Quick answers">⚡ Fast</button>
+      <button data-mode="claude" title="Claude (paid, uses your Anthropic credit)">🟣 Claude</button>
     </div>
   </header>
   <div id="chat"><div class="wrap" id="wrap"></div></div>
   <div class="composer">
     <div id="files"></div>
     <form id="f">
-      <button type="button" class="icon" id="attach" title="Attach code, text or PDF files">📎</button>
-      <input type="file" id="picker" multiple hidden
-        accept=".txt,.md,.py,.js,.ts,.tsx,.jsx,.json,.yaml,.yml,.html,.css,.java,.c,.cpp,.cs,.go,.rs,.php,.rb,.sh,.sql,.csv,.xml,.ipynb,.log,.env.example,.toml,.ini,.pdf" />
-      <textarea id="q" rows="1" placeholder="Ask anything..."></textarea>
+      <button type="button" class="icon" id="attach" title="Attach pictures, PDF, Word, Excel, PowerPoint, code or text (or paste a screenshot)">📎</button>
+      <input type="file" id="picker" multiple hidden />
+      <textarea id="q" rows="1" placeholder="Ask anything, or paste a screenshot..."></textarea>
       <button id="send" type="submit">Send</button>
     </form>
     <div class="hint">Enter to send · Shift+Enter for new line · AI can make mistakes</div>
@@ -143,7 +146,8 @@
   let currentId = load("current", null);
   let mode = load("mode", "smart");
   let pw = load("pw", "");
-  let pending = [];        // attached files: {name, text}
+  let pending = [];        // attached: {name, text} or {name, image, thumb}
+  const fullImages = new Map(); // message id -> full-size pictures (kept in memory only)
   let controller = null;   // for the Stop button
 
   const current = () => chats.find((c) => c.id === currentId);
@@ -235,6 +239,16 @@
   function addUser(m) {
     wrap.querySelector(".welcome")?.remove();
     const d = document.createElement("div"); d.className = "msg user";
+    if (m.images?.length) {
+      const box = document.createElement("div"); box.className = "pics";
+      const big = fullImages.get(m.id) || [];
+      m.images.forEach((src, i) => {
+        const img = document.createElement("img"); img.src = src; img.alt = "picture";
+        img.onclick = () => { const w = window.open(); if (w) w.document.write(`<body style="margin:0;background:#111;display:flex;align-items:center;justify-content:center;min-height:100vh"><img src="${big[i] || src}" style="max-width:100%;max-height:100vh">`); };
+        box.appendChild(img);
+      });
+      d.appendChild(box);
+    }
     for (const f of m.files || []) { const s = document.createElement("span"); s.className = "file"; s.textContent = "📄 " + f; d.appendChild(s); }
     if (m.files?.length) d.appendChild(document.createElement("br"));
     d.appendChild(document.createTextNode(m.shown ?? m.content));
@@ -272,25 +286,111 @@
 
   // ---------- files ----------
   $("attach").onclick = () => $("picker").click();
-  $("picker").onchange = async (e) => {
-    for (const file of e.target.files) {
-      if (file.size > 5 * 1024 * 1024) { alert(file.name + " is too big (max 5 MB)"); continue; }
+  $("picker").onchange = (e) => { addFiles(e.target.files); e.target.value = ""; };
+
+  const ext = (n) => (n.split(".").pop() || "").toLowerCase();
+  const IMG = ["png", "jpg", "jpeg", "webp", "gif", "bmp", "heic", "heif", "avif"];
+
+  async function addFiles(list) {
+    for (const file of list) {
+      const e = ext(file.name || "");
       try {
-        const text = file.name.toLowerCase().endsWith(".pdf") ? await readPdf(file) : await file.text();
-        pending.push({ name: file.name, text: text.slice(0, 50000) });
-      } catch { alert("Could not read " + file.name); }
+        if (file.type.startsWith("image/") || IMG.includes(e)) {
+          if (pending.filter((p) => p.image).length >= 3) { alert("Max 3 pictures per message."); continue; }
+          const { full, thumb } = await shrinkImage(file);
+          pending.push({ name: file.name || "screenshot.png", image: full, thumb });
+          showFiles(); continue;
+        }
+        if (file.size > 25 * 1024 * 1024) { alert(file.name + " is too big (max 25 MB)"); continue; }
+        let text;
+        if (e === "pdf") text = await readPdf(file);
+        else if (e === "docx") text = await readDocx(file);
+        else if (["xlsx", "xls", "xlsm", "ods"].includes(e)) text = await readSheet(file);
+        else if (e === "pptx") text = await readPptx(file);
+        else if (["doc", "ppt"].includes(e)) { alert(`Old .${e} files can't be read. Open it and "Save as" .${e}x, then attach again.`); continue; }
+        else {
+          text = await file.text();
+          if (text.slice(0, 2000).includes("\u0000")) { alert(file.name + ": this file type can't be read. Try PDF, Word, Excel, PowerPoint, a picture, or a text/code file."); continue; }
+        }
+        if (!text.trim()) { alert(file.name + " looks empty (if it's a scanned PDF, send a screenshot of the page instead)."); continue; }
+        pending.push({ name: file.name, text: text.slice(0, 60000) });
+      } catch (err) { alert("Could not read " + (file.name || "file") + (err?.message ? ": " + err.message : "")); }
     }
-    e.target.value = ""; showFiles();
-  };
+    showFiles();
+  }
+
   function showFiles() {
     $("files").innerHTML = "";
     pending.forEach((f, i) => {
       const c = document.createElement("div"); c.className = "chip";
-      c.innerHTML = "<span></span><b>✕</b>"; c.querySelector("span").textContent = "📄 " + f.name;
-      c.querySelector("b").onclick = () => { pending.splice(i, 1); showFiles(); };
+      if (f.image) { const im = document.createElement("img"); im.src = f.thumb; c.appendChild(im); }
+      const sp = document.createElement("span"); sp.textContent = (f.image ? "" : "📄 ") + f.name; c.appendChild(sp);
+      const x = document.createElement("b"); x.textContent = "✕"; x.onclick = () => { pending.splice(i, 1); showFiles(); }; c.appendChild(x);
       $("files").appendChild(c);
     });
   }
+
+  // Resize pictures so they upload fast: full (max 1600px) for the AI, small thumb for history
+  function loadImg(file) {
+    return new Promise((ok, bad) => {
+      const url = URL.createObjectURL(file);
+      const im = new Image();
+      im.onload = () => { ok(im); setTimeout(() => URL.revokeObjectURL(url), 1000); };
+      im.onerror = () => bad(new Error("this picture format isn't supported by your browser (try JPG or PNG)"));
+      im.src = url;
+    });
+  }
+  function draw(im, max, q) {
+    const k = Math.min(1, max / Math.max(im.naturalWidth, im.naturalHeight));
+    const cv = document.createElement("canvas");
+    cv.width = Math.max(1, Math.round(im.naturalWidth * k)); cv.height = Math.max(1, Math.round(im.naturalHeight * k));
+    const ctx = cv.getContext("2d"); ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, cv.width, cv.height);
+    ctx.drawImage(im, 0, 0, cv.width, cv.height);
+    return cv.toDataURL("image/jpeg", q);
+  }
+  async function shrinkImage(file) {
+    const im = await loadImg(file);
+    return { full: draw(im, 1600, 0.85), thumb: draw(im, 240, 0.7) };
+  }
+
+  // Load a library from the CDN only when needed
+  const libs = {};
+  function lib(src) {
+    return libs[src] || (libs[src] = new Promise((ok, bad) => {
+      const sc = document.createElement("script"); sc.src = src; sc.onload = ok; sc.onerror = () => bad(new Error("could not load reader")); document.head.appendChild(sc);
+    }));
+  }
+  async function readDocx(file) {
+    await lib("https://cdnjs.cloudflare.com/ajax/libs/mammoth/1.6.0/mammoth.browser.min.js");
+    const r = await mammoth.extractRawText({ arrayBuffer: await file.arrayBuffer() });
+    return r.value;
+  }
+  async function readSheet(file) {
+    await lib("https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js");
+    const wb = XLSX.read(await file.arrayBuffer(), { type: "array" });
+    return wb.SheetNames.map((n) => `[Sheet: ${n}]\n` + XLSX.utils.sheet_to_csv(wb.Sheets[n])).join("\n\n");
+  }
+  async function readPptx(file) {
+    await lib("https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js");
+    const zip = await JSZip.loadAsync(await file.arrayBuffer());
+    const slides = Object.keys(zip.files).filter((f) => /^ppt\/slides\/slide\d+\.xml$/.test(f))
+      .sort((a, b) => parseInt(a.match(/\d+/)[0]) - parseInt(b.match(/\d+/)[0]));
+    let out = "";
+    for (const [i, f] of slides.entries()) {
+      const xml = await zip.file(f).async("string");
+      const parts = [...xml.matchAll(/<a:t>([^<]*)<\/a:t>/g)].map((m) => m[1]);
+      const tmp = document.createElement("textarea"); tmp.innerHTML = parts.join(" ");
+      out += `\n[Slide ${i + 1}]\n` + tmp.value;
+    }
+    return out;
+  }
+
+  // Paste screenshots straight into the chat (Ctrl+V)
+  document.addEventListener("paste", (e) => {
+    const files = [...(e.clipboardData?.items || [])].filter((it) => it.kind === "file").map((it) => it.getAsFile()).filter(Boolean);
+    if (files.length) { e.preventDefault(); addFiles(files); }
+  });
+
   let pdfReady = null;
   function loadPdfJs() {
     if (!pdfReady) pdfReady = new Promise((ok, bad) => {
@@ -319,17 +419,33 @@
     const text = q.value.trim();
     if (!text && !pending.length) return;
     const c = current();
-    const files = pending; pending = []; showFiles();
-    const content = files.map((f) => `File: ${f.name}\n\`\`\`\n${f.text}\n\`\`\``).join("\n\n") + (files.length ? "\n\n" : "") + (text || "Please look at the attached file(s).");
-    const msg = { role: "user", content, shown: text, files: files.map((f) => f.name) };
+    const att = pending; pending = []; showFiles();
+    const files = att.filter((f) => !f.image), pics = att.filter((f) => f.image);
+    const content = files.map((f) => `File: ${f.name}\n\`\`\`\n${f.text}\n\`\`\``).join("\n\n") + (files.length ? "\n\n" : "") +
+      (text || (pics.length && !files.length ? "Look at this picture and help me with it." : "Please look at the attached file(s)."));
+    const msg = { id: Date.now().toString(36) + Math.random().toString(36).slice(2, 6), role: "user", content, shown: text, files: files.map((f) => f.name) };
+    if (pics.length) { msg.images = pics.map((p) => p.thumb); fullImages.set(msg.id, pics.map((p) => p.image)); }
     q.value = ""; autosize();
     c.messages.push(msg);
-    if (c.title === "New chat") c.title = (text || files[0].name).slice(0, 40);
+    if (c.title === "New chat") c.title = (text || att[0].name).slice(0, 40);
     persist(c); renderList(); $("title").textContent = c.title;
     // remove old regenerate buttons
     wrap.querySelectorAll(".actions button:nth-child(2)").forEach((b) => { if (b.textContent.includes("Regenerate")) b.remove(); });
     addUser(msg);
     await reply(c);
+  }
+
+  function buildPayload(c) {
+    let left = 3;
+    const out = c.messages.map(({ role, content }) => ({ role, content }));
+    for (let i = c.messages.length - 1; i >= 0; i--) {
+      const m = c.messages[i];
+      if (!m.images?.length) continue;
+      const big = fullImages.get(m.id);
+      if (big && left > 0) { out[i].images = big.slice(0, left); left -= out[i].images.length; }
+      else out[i].content += `\n\n[${m.images.length} picture(s) were attached here earlier but are no longer available.]`;
+    }
+    return out;
   }
 
   async function reply(c) {
@@ -344,7 +460,7 @@
       const r = await fetch("/api/chat", {
         method: "POST",
         headers: { "Content-Type": "application/json", "x-site-password": pw },
-        body: JSON.stringify({ mode, messages: c.messages.map(({ role, content }) => ({ role, content })) }),
+        body: JSON.stringify({ mode, messages: buildPayload(c) }),
         signal: controller.signal,
       });
       if (r.status === 401) {
@@ -420,7 +536,7 @@
   document.addEventListener("dragover", (e) => e.preventDefault());
   document.addEventListener("drop", (e) => {
     e.preventDefault();
-    if (e.dataTransfer?.files?.length) { $("picker").files = e.dataTransfer.files; $("picker").onchange({ target: $("picker") }); }
+    if (e.dataTransfer?.files?.length) addFiles(e.dataTransfer.files);
   });
 
   // ---------- sync across devices ----------
