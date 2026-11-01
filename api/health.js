@@ -21,7 +21,23 @@ export default async function handler(req, res) {
     }
   }
 
+  async function pingClaude() {
+    const key = process.env.ANTHROPIC_API_KEY;
+    if (!key) return (out.claude = "no key set");
+    try {
+      const r = await fetch("https://api.anthropic.com/v1/messages", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", "x-api-key": key, "anthropic-version": "2023-06-01" },
+        body: JSON.stringify({ model: process.env.CLAUDE_FAST_MODEL || "claude-haiku-5-5", max_tokens: 5, messages: [{ role: "user", content: "Say OK" }] }),
+        signal: AbortSignal.timeout(15000),
+      });
+      const d = await r.json().catch(() => ({}));
+      out.claude = r.ok ? "OK" : `error ${r.status}: ${(d?.error?.message || "").slice(0, 160)}`;
+    } catch (e) { out.claude = "network error"; }
+  }
+
   await Promise.all([
+    pingClaude(),
     ping("groq", "https://api.groq.com/openai/v1/chat/completions", process.env.GROQ_API_KEY, "openai/gpt-oss-20b"),
     ping("gemini", "https://generativelanguage.googleapis.com/v1beta/openai/chat/completions", process.env.GEMINI_API_KEY, process.env.GEMINI_MODEL || "gemini-3.8-flash"),
   ]);
