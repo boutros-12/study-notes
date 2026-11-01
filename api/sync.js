@@ -9,7 +9,11 @@
 // GET  /api/sync            header x-sync-code -> { data: {chats, deleted} | null }
 // PUT  /api/sync  {data}    header x-sync-code -> { ok: true }
 
-import { createHash } from "crypto";
+// SHA-256 with the built-in Web Crypto (works on Vercel and Netlify)
+async function sha256(text) {
+  const buf = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text));
+  return [...new Uint8Array(buf)].map((b) => b.toString(16).padStart(2, "0")).join("");
+}
 
 const URL_ = () => process.env.KV_REST_API_URL || process.env.UPSTASH_REDIS_REST_URL;
 const TOKEN = () => process.env.KV_REST_API_TOKEN || process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -42,7 +46,7 @@ export default async function handler(req, res) {
 
   const code = String(req.headers["x-sync-code"] || "");
   if (code.length < 6) return res.status(400).json({ error: "Sync code must be at least 6 characters." });
-  const key = "chats:" + createHash("sha256").update("cedar-sync:" + code).digest("hex");
+  const key = "chats:" + (await sha256("cedar-sync:" + code));
 
   try {
     if (req.method === "GET") {
